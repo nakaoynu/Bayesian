@@ -71,6 +71,11 @@ PEAK_MATCH_MAX_DISTANCE = 0.12
 # 背景領域尤度を使用するか
 USE_BACKGROUND_LIKELIHOOD = True
 
+# B₆ を 0 に固定するか
+# True : B₆ = 0 固定 (自由度削減・収束安定化。データが情報を持たない場合に推奨)
+# False: B₆ を Normal 事前分布で推定 (真の事後分布を求める場合)
+FIX_B6_ZERO = True
+
 # デバッグモード: True にすると 2 データセット・500 サンプルで高速テスト
 DEBUG_MODE = False
 
@@ -324,10 +329,19 @@ def calculate_transmission(freq_thz, mu_r, d, eps_bg):
     t[safe_mask] = numerator[safe_mask] / denom_fp[safe_mask]
     transmission = np.abs(t) ** 2
     transmission = np.where(np.isfinite(transmission), transmission, 0.0)
-    transmission = np.clip(transmission, 0, 2)
-    t_min, t_max = np.min(transmission), np.max(transmission)
+    transmission = np.clip(transmission, 0, None)
+    # ---- ポラリトン領域基準の正規化 ----
+    # X_sub = freq <= POLARITON_UPPER の透過率値を基準スケールとして使用
+    # 共振器領域 (freq >= CAVITY_LOWER) は自然に 1 を超える
+    sub_mask = freq_thz <= POLARITON_UPPER
+    if np.any(sub_mask):
+        t_min = np.min(transmission[sub_mask])
+        t_max = np.max(transmission[sub_mask])
+    else:
+        t_min = np.min(transmission)
+        t_max = np.max(transmission)
     if t_max > t_min and np.isfinite(t_max) and np.isfinite(t_min):
-        return np.clip((transmission - t_min) / (t_max - t_min), 0.0, 1.0)
+        return (transmission - t_min) / (t_max - t_min)   # clip しない: 共振器領域で >1 を許容
     else:
         return np.full_like(transmission, 0.5)
 
@@ -447,6 +461,33 @@ def create_weight_array(freq, _trans, polariton_regions, cavity_regions):
 
 
 # ============================================================================
+# 観測データ正規化 (事後予測スペクトルと同一スケーリング)
+# ============================================================================
+def normalize_obs_spectrum(freq, trans, polariton_upper=POLARITON_UPPER):
+    """
+    ポラリトン領域 (freq <= POLARITON_UPPER) を基準に 0-1 正規化する。
+    共振器領域 (freq >= CAVITY_LOWER) は自然に 1 を超える。
+
+    calculate_transmission() の正規化と完全に同一の計算式:
+        x'_normalized = (x - min(X_sub)) / (max(X_sub) - min(X_sub))
+        X_sub = { x | freq(x) <= POLARITON_UPPER }
+    """
+    sub_mask = freq <= polariton_upper
+    if np.any(sub_mask):
+        t_min = np.min(trans[sub_mask])
+        t_max = np.max(trans[sub_mask])
+    else:
+        # フォールバック: 全域で正規化
+        t_min = np.min(trans)
+        t_max = np.max(trans)
+
+    if t_max > t_min and np.isfinite(t_max) and np.isfinite(t_min):
+        return (trans - t_min) / (t_max - t_min)   # clip なし: 共振器領域で >1 を許容
+    else:
+        return trans.copy()   # 正規化不能な場合はそのまま返す
+
+
+# ============================================================================
 # データ読み込み
 # ============================================================================
 def load_all_datasets(target_data_list):
@@ -472,6 +513,9 @@ def load_all_datasets(target_data_list):
             df_clean = df[['Frequency (THz)', config['col']]].dropna()
             freq  = df_clean['Frequency (THz)'].values.astype(np.float64)
             trans = df_clean[config['col']].values.astype(np.float64)
+
+            # ポラリトン領域基準で正規化（calculate_transmission と同一スケール）
+            trans = normalize_obs_spectrum(freq, trans)
 
             polariton_regions, cavity_regions = detect_peaks_and_classify(freq, trans)
             weight_array = create_weight_array(freq, trans, polariton_regions, cavity_regions)
@@ -885,7 +929,7 @@ def plot_posterior_predictive_spectra(trace, datasets, model_form='H', save_dir=
         ax.legend(fontsize=6, loc='best')
         ax.grid(alpha=0.3)
         ax.set_xlim([freq.min(), freq.max()])
-        ax.set_ylim([0, 1.05])
+        ax.set_ylim([0, max(1.05, np.nanmax(trans_median) * 1.05)])
 
     for idx in range(n_datasets, len(axes)):
         axes[idx].axis('off')
@@ -971,6 +1015,14 @@ def plot_posterior_predictive_spectra_combined(trace_H, trace_B, datasets, save_
         median_B = np.median(trans_samples_B, axis=0)
         hdi_B = az.hdi(trans_samples_B, hdi_prob=0.94)
 
+        # 領域ハイライト（個別プロットと統一）
+        for f_s, f_e in data['polariton_regions']:
+            ax.axvspan(f_s, f_e, alpha=0.12, color='orange',
+                       label='Polariton' if f_s == data['polariton_regions'][0][0] else None)
+        for f_s, f_e in data['cavity_regions']:
+            ax.axvspan(f_s, f_e, alpha=0.12, color='green',
+                       label='Cavity' if f_s == data['cavity_regions'][0][0] else None)
+
         ax.plot(freq, trans_obs, 'ko', markersize=2.3, alpha=0.55, label='Obs')
         ax.plot(freq, median_H, 'r-', lw=2.0, label='H median')
         ax.fill_between(freq, hdi_H[:, 0], hdi_H[:, 1], color='red', alpha=0.15, label='H 94% HDI')
@@ -982,11 +1034,10 @@ def plot_posterior_predictive_spectra_combined(trace_H, trace_B, datasets, save_
         ax.set_title(f"{label}  RMSE(H)={rmse_H:.4f}  RMSE(B)={rmse_B:.4f}", fontsize=8, fontweight='bold')
         ax.set_xlabel('Frequency (THz)', fontsize=9)
         ax.set_ylabel('Transmittance', fontsize=9)
+        ax.legend(fontsize=6, loc='best')
         ax.grid(alpha=0.3)
         ax.set_xlim([freq.min(), freq.max()])
-        ax.set_ylim([0, 1.05])
-        if idx == 0:
-            ax.legend(fontsize=6, loc='best')
+        ax.set_ylim([0, max(1.05, max(np.nanmax(median_H), np.nanmax(median_B)) * 1.05)])
 
     for idx in range(n_datasets, len(axes)):
         axes[idx].axis('off')
@@ -1304,22 +1355,28 @@ def build_pymc_model(datasets, model_form, v8_params_H, v8_params_B):
             pt.clip(a_raw, 0.1, 12.0) * SCALING_FACTORS['a'])
 
         # ------------------------------------------
-        # 3. B₄: v8 中心 Normal (負値許容)
+        # 3. B₄: v8 中心 Normal (負値許容・clip なし → 真の事後分布)
         # ------------------------------------------
         B4_raw_name = f'B4_raw_{model_form}'
-        B4_sigma = max(0.01, 3.0 * (v8_params_model.get('B4_std') or 0.0))
+        B4_sigma = max(0.05, 3.0 * (v8_params_model.get('B4_std') or 0.0))
         B4_raw = pm.Normal(B4_raw_name, mu=v8_params_model['B4'], sigma=B4_sigma)
         B4_scaled = pm.Deterministic('B4_scaled',
-            pt.clip(B4_raw, -0.75, 0.75) * SCALING_FACTORS['B4'])
+            B4_raw * SCALING_FACTORS['B4'])
 
         # ------------------------------------------
-        # 4. B₆: v8 中心 Normal + clip
+        # 4. B₆: FIX_B6_ZERO モードで分岐
         # ------------------------------------------
-        B6_raw_name = f'B6_raw_{model_form}'
-        B6_sigma = max(0.003, 3.0 * (v8_params_model.get('B6_std') or 0.0))
-        B6_raw = pm.Normal(B6_raw_name, mu=v8_params_model['B6'], sigma=B6_sigma)
-        B6_scaled = pm.Deterministic('B6_scaled',
-            pt.clip(B6_raw, -0.25, 0.25) * SCALING_FACTORS['B6'])
+        if FIX_B6_ZERO:
+            # 固定モード: B₆ = 0 (自由度削減・収束安定化)
+            B6_scaled = pm.Deterministic('B6_scaled',
+                pt.as_tensor_variable(0.0))
+        else:
+            # 推定モード: Normal 事前分布 (clip なし → 真の事後分布)
+            B6_raw_name = f'B6_raw_{model_form}'
+            B6_sigma = max(0.010, 3.0 * (v8_params_model.get('B6_std') or 0.0))
+            B6_raw = pm.Normal(B6_raw_name, mu=v8_params_model['B6'], sigma=B6_sigma)
+            B6_scaled = pm.Deterministic('B6_scaled',
+                B6_raw * SCALING_FACTORS['B6'])
 
         # ------------------------------------------
         # 5. ε_bg: TruncNormal
@@ -1332,22 +1389,23 @@ def build_pymc_model(datasets, model_form, v8_params_H, v8_params_B):
             upper=16.0 * SCALING_FACTORS['eps'])
 
         # ------------------------------------------
-        # 6. γ: Non-centered 階層モデル (v7.1 継承)
+        # 6. γ: Non-centered 階層モデル (clip なし → exp() で正定値保証)
         # ------------------------------------------
         log_gamma_mu = pm.Normal('log_gamma_mu',
-            mu=np.log(GAMMA_HYPERPRIOR_MU), sigma=0.3)
-        log_gamma_sd = pm.HalfNormal('log_gamma_sd', sigma=0.3)
+            mu=np.log(GAMMA_HYPERPRIOR_MU), sigma=0.5)
+        log_gamma_sd = pm.HalfNormal('log_gamma_sd', sigma=0.5)
 
         gamma_raw = pm.Normal('gamma_raw', mu=0, sigma=1, shape=7)
         gamma_vec_unscaled = pm.Deterministic('gamma_vec',
             pt.exp(log_gamma_mu + log_gamma_sd * gamma_raw))
+        # exp() が常に正を保証するため clip 不要
         gamma_vec_scaled = pm.Deterministic('gamma_vec_scaled',
-            pt.clip(gamma_vec_unscaled, 0.001, 0.5) * SCALING_FACTORS['gamma'])
-        # 各 gamma への弱い v8 アンカーを入れ、下限張り付きを緩和しつつ同定性を改善する
+            gamma_vec_unscaled * SCALING_FACTORS['gamma'])
+        # 各 gamma への弱い v8 アンカー（同定性補助）
         gamma_v8 = np.asarray(v8_params_model['gamma'], dtype=np.float64)
         gamma_prior_sigma = np.maximum(0.01, 0.5 * np.abs(gamma_v8))
         gamma_anchor_z = (
-            gamma_vec_scaled / SCALING_FACTORS['gamma'] - gamma_v8
+            gamma_vec_unscaled - gamma_v8
         ) / gamma_prior_sigma
         pm.Potential('ll_gamma_v8_anchor', -0.1 * pt.sum(gamma_anchor_z ** 2))
         for i in range(7):
@@ -1517,7 +1575,7 @@ def main():
             'g':   float(posterior['g_factor_scaled'].mean()) / SCALING_FACTORS['g'],
             'a':   float(posterior['a_scale_scaled'].mean())  / SCALING_FACTORS['a'],
             'B4':  float(posterior['B4_scaled'].mean())       / SCALING_FACTORS['B4'],
-            'B6':  float(posterior['B6_scaled'].mean())       / SCALING_FACTORS['B6'],
+            'B6':  0.0 if FIX_B6_ZERO else float(posterior['B6_scaled'].mean()) / SCALING_FACTORS['B6'],
             'eps': float(posterior['eps_bg_scaled'].mean())   / SCALING_FACTORS['eps'],
             'gamma': [float(posterior[f'gamma_{i+1}_scaled'].mean()) / SCALING_FACTORS['gamma'] for i in range(7)],
             'gamma_mean': float(posterior['gamma_mean_scaled'].mean()) / SCALING_FACTORS['gamma'],
@@ -1533,6 +1591,7 @@ def main():
         'timestamp': timestamp,
         'sampler': SAMPLER_TYPE,
         'likelihood': LIKELIHOOD_TYPE,
+        'fix_B6_zero': FIX_B6_ZERO,
         'sigma_fwhm': SIGMA_FWHM,
         'sigma_cavity_spectrum': 'N/A (v10: removed)',
         'peak_match_max_distance': PEAK_MATCH_MAX_DISTANCE,
@@ -1555,3 +1614,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    
