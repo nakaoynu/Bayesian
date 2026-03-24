@@ -17,20 +17,18 @@ Bayesian/
 │   ├── BayesianInput_Raw_Transmittance_Temperature.xlsx
 │   └── BayesianInput_Raw_Transmittance_Field.xlsx
 ├── Programs/
-│   ├── ggg_bayesian_last.py
-│   ├── ggg_bayesian_last.md
-│   ├── bayesian_v10_polariton_priority.py
-│   ├── handover_document_v10.md
-│   ├── wls_v8_mixed_fitting.py
-│   ├── WLS_v8_changelog.md
-│   ├── BayesFacotr.md
-│   ├── test3_regression_tests.py
-│   ├── issues/
-│   ├── wls_v8_results_20260306_160250/
-│   └── bayesian_v10_results_*/
-└── Reference/
-    ├── Master_thesis_24NC230_Nakao.pdf
-    └── 関連論文 PDF
+    ├── ggg_bayesian_last.py
+    ├── ggg_bayesian_last.md
+    ├── bayesian_v10_polariton_priority.py
+    ├── handover_document_v10.md
+    ├── wls_v8_mixed_fitting.py
+    ├── WLS_v8_changelog.md
+    ├── BayesFacotr.md
+    ├── test3_regression_tests.py
+    ├── issues/
+    ├── wls_v8_results_20260306_160250/
+    └── bayesian_v10_results_*/
+
 ```
 
 ## 主なファイル
@@ -43,7 +41,6 @@ Bayesian/
 | `Programs/wls_v8_mixed_fitting.py` | WLS フィッティングコード |
 | `Programs/wls_v8_results_20260306_160250/` | Bayesian 側が参照する WLS 結果 |
 | `bayesian_inputs/` | 実験入力データ |
-| `Reference/` | 修士論文と参照論文 |
 
 `Programs/ggg_bayesian_last.py` と `Programs/ggg_bayesian_last.md` が、現在の引き継ぎ対象として最も見やすい組（code, document）です。
 
