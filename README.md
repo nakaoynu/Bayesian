@@ -1,54 +1,89 @@
 # Bayesian
 
-GGG (Gd3Ga5O12) の THz 透過スペクトル解析リポジトリです。  
-主に以下 2 系統の解析コードを含みます。
+GGG (`Gd3Ga5O12`) の THz 透過スペクトル解析用リポジトリです。  
+現在の作業用コードは主に `Programs/` にまとまっており、Bayesian 推定、WLS フィッティング、引き継ぎ資料、既存の解析結果を同じ場所で管理しています。
 
-- Bayesian 推定（PyMC/SMC）
-- WLS（Weighted Least Squares）最適化
+このリポジトリで主に扱っている内容は次の 2 系統です。
 
-本リポジトリでは、H-form / B-form の 2 モデルを比較し、スペクトル形状・共振器ピーク位置・FWHM などを用いてパラメータ推定を行います。
+- Bayesian 推定: PyMC + SMC を用いた H-form / B-form の比較
+- WLS フィッティング: 参照値作成と初期値評価
 
-## ディレクトリ構成
+## 現在の構成
 
-- `bayesian_inputs/`
-  - 入力データ（Excel）
-- `march/`
-  - 主要スクリプトと結果
-  - `bayesian_v10_polariton_priority.py`: 現行の Bayesian 推定コード
-  - `wls_v8_mixed_fitting.py`: 現行の WLS コード
-  - `handover_document_v10.md`: v10 の引き継ぎ解説
-  - `WLS_v8_changelog.md`: WLS 変更履歴
-  - `bayesian_v9_results_*/`, `wls_v8_results_*/`: 出力結果
-- `Programs/`
-  - 検証・補助スクリプト
-- `Reference/`
-  - 参照資料
+```text
+Bayesian/
+├── README.md
+├── bayesian_inputs/
+│   ├── BayesianInput_Raw_Transmittance_Temperature.xlsx
+│   └── BayesianInput_Raw_Transmittance_Field.xlsx
+├── Programs/
+│   ├── ggg_bayesian_last.py
+│   ├── ggg_bayesian_last.md
+│   ├── bayesian_v10_polariton_priority.py
+│   ├── handover_document_v10.md
+│   ├── wls_v8_mixed_fitting.py
+│   ├── WLS_v8_changelog.md
+│   ├── BayesFacotr.md
+│   ├── test3_regression_tests.py
+│   ├── issues/
+│   ├── wls_v8_results_20260306_160250/
+│   └── bayesian_v10_results_*/
+└── Reference/
+    ├── Master_thesis_24NC230_Nakao.pdf
+    └── 関連論文 PDF
+```
+
+## 主なファイル
+
+| パス | 役割 |
+| --- | --- |
+| `Programs/ggg_bayesian_last.py` | 現在の Bayesian 解析コード |
+| `Programs/ggg_bayesian_last.md` | 上記コードの引き継ぎ資料 |
+| `Programs/bayesian_v10_polariton_priority.py` | v10 系の Bayesian スクリプト |
+| `Programs/wls_v8_mixed_fitting.py` | WLS フィッティングコード |
+| `Programs/wls_v8_results_20260306_160250/` | Bayesian 側が参照する WLS 結果 |
+| `bayesian_inputs/` | 実験入力データ |
+| `Reference/` | 修士論文と参照論文 |
+
+`Programs/ggg_bayesian_last.py` と `Programs/ggg_bayesian_last.md` が、現在の引き継ぎ対象として最も見やすい組（code, document）です。
+
+## 解析の概要
+
+Bayesian 側では、GGG の THz 透過スペクトルに対して次を行います。
+
+1. Excel から温度依存・磁場依存データを読み込む
+2. スペクトルを前処理し、ピーク位置と FWHM を抽出する
+3. 物理モデルから透過スペクトルを計算する
+4. PyMC の SMC サンプラーでパラメータを推定する
+5. H-form と B-form を Bayes factor などで比較する
+
+設計上の特徴は、**ポラリトン領域のスペクトル形状を最優先で合わせる**ことです。  
+共振器領域は補助拘束として使い、主にピーク位置と FWHM で効かせます。
 
 ## 実行環境
 
-推奨: Python 3.10+（3.11 でも動作）
+推奨は Python 3.10 以上です。  
+主要な依存ライブラリは次の通りです。
 
-必要ライブラリ（主要）
-
-- numpy
-- pandas
-- scipy
-- matplotlib
-- pymc
-- arviz
-- pytensor
-- openpyxl
+- `numpy`
+- `pandas`
+- `scipy`
+- `matplotlib`
+- `pymc`
+- `arviz`
+- `pytensor`
+- `openpyxl`
 
 ## セットアップ
 
-### 1. 仮想環境の作成（例: conda）
+### 1. 仮想環境
 
 ```bash
 conda create -n research python=3.11 -y
 conda activate research
 ```
 
-### 2. 依存パッケージの導入
+### 2. 依存パッケージ
 
 ```bash
 pip install numpy pandas scipy matplotlib pymc arviz pytensor openpyxl
@@ -56,28 +91,44 @@ pip install numpy pandas scipy matplotlib pymc arviz pytensor openpyxl
 
 ## 使い方
 
-作業ディレクトリを `march/` にして実行するのが簡単です。
+作業ディレクトリはリポジトリ直下でも `Programs/` でも構いませんが、現状は `Programs/` に入って実行するのが分かりやすいです。
 
 ```bash
-cd march
+cd Programs
 ```
 
-### Bayesian 推定（推奨メイン）
+### Bayesian 推定
+
+現行の入口は次です。
+
+```bash
+python ggg_bayesian_last.py
+```
+
+互換用の v10 スクリプトを使う場合は次です。
 
 ```bash
 python bayesian_v10_polariton_priority.py
 ```
 
-- 入力: `../bayesian_inputs/`（または `march/bayesian_inputs/`）
-- 出力: `march/bayesian_v9_results_YYYYMMDD_HHMMSS/`
+入力:
 
-主な出力ファイル
+- `../bayesian_inputs/`
+- `./wls_v8_results_20260306_160250/parameters_H.csv`
+- `./wls_v8_results_20260306_160250/parameters_B.csv`
+
+出力:
+
+- `Programs/bayesian_v10_results_YYYYMMDD_HHMMSS/`
+
+主な出力ファイル:
 
 - `trace_H.nc`, `trace_B.nc`
 - `summary_H.csv`, `summary_B.csv`
 - `parameters_H.csv`, `parameters_B.csv`
 - `model_evaluation.json`
-- 各種プロット（スペクトル、事後分布、エネルギー準位、感受率など）
+- `posterior_predictive_spectra_HB.png`
+- `posterior_distributions_H.png`, `posterior_distributions_B.png`
 
 ### WLS フィッティング
 
@@ -85,48 +136,53 @@ python bayesian_v10_polariton_priority.py
 python wls_v8_mixed_fitting.py
 ```
 
-- 出力: `march/wls_v8_results_YYYYMMDD_HHMMSS/`
+出力:
 
-主な出力ファイル
+- `Programs/wls_v8_results_YYYYMMDD_HHMMSS/`
+
+主な出力ファイル:
 
 - `parameters_H.csv`, `parameters_B.csv`
 - `summary_H.csv`, `summary_B.csv`
 - `correlation_H.csv`, `correlation_B.csv`
 - `model_evaluation.json`
-- 各種フィット図・残差図
 
-## 計算負荷に関する注意
+## CPU 負荷の調整
 
-Bayesian 実行は CPU 負荷が高くなります。  
-`bayesian_v10_polariton_priority.py` にはローカル端末向けの自動負荷制御が入っています。
+Bayesian 推定は SMC を使うため重いです。  
+`ggg_bayesian_last.py` では次の環境変数で負荷を調整できます。
 
-- `BAYES_BLAS_THREADS`（BLAS スレッド数）
-- `BAYES_MAX_CHAINS`（SMC 並列チェーン上限）
-- `BAYES_MIN_CHAINS`（SMC 並列チェーン下限）
+- `BAYES_BLAS_THREADS`
+- `BAYES_MAX_CHAINS`
+- `BAYES_MIN_CHAINS`
 
 例:
 
 ```bash
-BAYES_BLAS_THREADS=1 BAYES_MAX_CHAINS=4 python bayesian_v10_polariton_priority.py
+BAYES_BLAS_THREADS=1 BAYES_MAX_CHAINS=4 python ggg_bayesian_last.py
 ```
 
-## 現在の主対象コード
+コード内の設定で軽く試したい場合は、`DEBUG_MODE = True` も使えます。
 
-- Bayesian: `march/bayesian_v10_polariton_priority.py`
-- WLS: `march/wls_v8_mixed_fitting.py`
+## 最初に見るとよい資料
 
-旧バージョン（v8/v9 系）は比較・再現用として残しています。
+読む順番は次がおすすめです。
+
+1. `Programs/ggg_bayesian_last.md`
+2. `Programs/ggg_bayesian_last.py`
+3. `Programs/wls_v8_results_20260306_160250/parameters_H.csv`
+4. `Programs/BayesFacotr.md`
 
 ## トラブルシュート
 
-- 入力ファイルが見つからない場合
-  - `bayesian_inputs/` がリポジトリ直下にあるか確認
-- `ModuleNotFoundError` が出る場合
-  - 仮想環境を有効化し、依存パッケージを再インストール
-- 負荷が高すぎる場合
-  - `BAYES_MAX_CHAINS` を 2〜4 に下げる
-  - `BAYES_BLAS_THREADS=1` を指定
+| 症状 | 確認すること |
+| --- | --- |
+| 入力ファイルが見つからない | `bayesian_inputs/` がリポジトリ直下にあるか |
+| WLS 参照 CSV が見つからない | `Programs/wls_v8_results_20260306_160250/` の場所と名前 |
+| `ModuleNotFoundError` が出る | 仮想環境と依存パッケージ |
+| 実行が重い | `BAYES_MAX_CHAINS` を下げる、`BAYES_BLAS_THREADS=1` を使う |
 
-## ライセンス
+## 補足
 
-必要に応じて追記してください（現状未設定）。
+過去の文書や一部テストファイルには `march/` や `test3.py` など旧名称が残っている可能性があります。  
+現在の実作業では、まず `Programs/ggg_bayesian_last.py` を基準に読むのが安全です。
