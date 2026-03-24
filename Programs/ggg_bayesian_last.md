@@ -194,7 +194,7 @@
 
 ### 4.2 出力
 
-実行すると、`march/` 配下に次の形式の結果ディレクトリが作られます。
+実行すると、`Programs/` 配下に次の形式の結果ディレクトリが作られます。
 
 ```text
 bayesian_v10_results_YYYYMMDD_HHMMSS/
@@ -320,7 +320,7 @@ bayesian_v10_results_YYYYMMDD_HHMMSS/
 ### 7.1 実行方法
 
 ```bash
-python march/ggg_bayesian_last.py
+python Programs/ggg_bayesian_last.py
 ```
 
 負荷を落として試すときは、次を調整します。
@@ -335,7 +335,7 @@ python march/ggg_bayesian_last.py
 export BAYES_BLAS_THREADS=1
 export BAYES_MAX_CHAINS=8
 export BAYES_MIN_CHAINS=2
-python march/ggg_bayesian_last.py
+python Programs/ggg_bayesian_last.py
 ```
 
 ### 7.2 よくある詰まりポイント
