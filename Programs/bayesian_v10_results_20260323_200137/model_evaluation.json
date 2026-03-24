@@ -1,0 +1,40 @@
+{
+  "H_form": {
+    "model_name": "H-form",
+    "mean_rhat": 1.0,
+    "mean_ess": 10966.275,
+    "n_chains": 5,
+    "n_draws": 10000,
+    "total_samples": 50000
+  },
+  "B_form": {
+    "model_name": "B-form",
+    "mean_rhat": 1.0,
+    "mean_ess": 25020.8,
+    "n_chains": 5,
+    "n_draws": 10000,
+    "total_samples": 50000
+  },
+  "comparison_ess": {
+    "ess_H": 10966.275,
+    "ess_B": 25020.8,
+    "winner": "B-form",
+    "method": "ESS comparison"
+  },
+  "comparison_bayes_factor": {
+    "log_BF": 44.902028113133824,
+    "log10_BF": 19.5007030357987,
+    "interpretation": "\u5f37\u3044\u8a3c\u62e0",
+    "winner": "H-form",
+    "method": "SMC marginal likelihood"
+  },
+  "timestamp": "20260323_200137",
+  "sampler": "SMC",
+  "likelihood": "mixed",
+  "fix_B6_zero": false,
+  "sigma_fwhm": 0.005,
+  "sigma_cavity_spectrum": "N/A (v10: removed)",
+  "peak_match_max_distance": 0.12,
+  "use_background_likelihood": true,
+  "normalization": "obs_shared"
+}

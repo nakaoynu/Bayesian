@@ -72,7 +72,7 @@ PEAK_MATCH_MAX_DISTANCE = 0.12
 USE_BACKGROUND_LIKELIHOOD = True
 
 # デバッグモード: True にすると 2 データセット・500 サンプルで高速テスト
-DEBUG_MODE = False
+DEBUG_MODE = True
 
 import os
 import json
@@ -324,10 +324,19 @@ def calculate_transmission(freq_thz, mu_r, d, eps_bg):
     t[safe_mask] = numerator[safe_mask] / denom_fp[safe_mask]
     transmission = np.abs(t) ** 2
     transmission = np.where(np.isfinite(transmission), transmission, 0.0)
-    transmission = np.clip(transmission, 0, 2)
-    t_min, t_max = np.min(transmission), np.max(transmission)
+    transmission = np.clip(transmission, 0, None)
+    # ---- ポラリトン領域基準の正規化 ----
+    # X_sub = freq <= POLARITON_UPPER の透過率値を基準スケールとして使用
+    # 共振器領域 (freq >= CAVITY_LOWER) は自然に 1 を超える
+    sub_mask = freq_thz <= POLARITON_UPPER
+    if np.any(sub_mask):
+        t_min = np.min(transmission[sub_mask])
+        t_max = np.max(transmission[sub_mask])
+    else:
+        t_min = np.min(transmission)
+        t_max = np.max(transmission)
     if t_max > t_min and np.isfinite(t_max) and np.isfinite(t_min):
-        return np.clip((transmission - t_min) / (t_max - t_min), 0.0, 1.0)
+        return (transmission - t_min) / (t_max - t_min)   # clip しない: 共振器領域で >1 を許容
     else:
         return np.full_like(transmission, 0.5)
 
@@ -885,13 +894,122 @@ def plot_posterior_predictive_spectra(trace, datasets, model_form='H', save_dir=
         ax.legend(fontsize=6, loc='best')
         ax.grid(alpha=0.3)
         ax.set_xlim([freq.min(), freq.max()])
-        ax.set_ylim([0, 1.05])
+        ax.set_ylim([0, max(1.05, np.nanmax(trans_median) * 1.05)])
 
     for idx in range(n_datasets, len(axes)):
         axes[idx].axis('off')
     plt.tight_layout()
     if save_dir:
         path = save_dir / f'posterior_predictive_spectra_{model_form}.png'
+        plt.savefig(path, dpi=300, bbox_inches='tight')
+        print(f"  ✓ {path.name} saved")
+    plt.close()
+
+
+def plot_posterior_predictive_spectra_combined(trace_H, trace_B, datasets, save_dir=None, n_samples=200):
+    """H/B モデルの事後予測スペクトルを同一図に重ね描きする。"""
+    print(f"\n{'='*80}\n事後予測スペクトル重ね描き (H vs B)\n{'='*80}")
+
+    posterior_H = trace_H.posterior
+    posterior_B = trace_B.posterior
+
+    n_chains_H = posterior_H.dims['chain']
+    n_draws_H = posterior_H.dims['draw']
+    total_samples_H = n_chains_H * n_draws_H
+    if total_samples_H > n_samples:
+        sample_indices_H = np.random.choice(total_samples_H, size=n_samples, replace=False)
+    else:
+        sample_indices_H = np.arange(total_samples_H)
+        n_samples = total_samples_H
+
+    n_chains_B = posterior_B.dims['chain']
+    n_draws_B = posterior_B.dims['draw']
+    total_samples_B = n_chains_B * n_draws_B
+    if total_samples_B > n_samples:
+        sample_indices_B = np.random.choice(total_samples_B, size=n_samples, replace=False)
+    else:
+        sample_indices_B = np.arange(total_samples_B)
+
+    n_datasets = len(datasets)
+    ncols = 2
+    nrows = (n_datasets + 1) // 2
+    fig, axes = plt.subplots(nrows, ncols, figsize=(14, 3.5 * nrows))
+    fig.suptitle('Posterior Predictive Spectra (H/B Overlay) — H:red, B:blue', fontsize=12, y=0.995)
+    axes = axes.flatten()
+
+    for idx, data in enumerate(datasets):
+        ax = axes[idx]
+        freq = data['freq']
+        trans_obs = data['trans']
+        B = data['B']
+        T = data['T']
+        label = data['label']
+
+        trans_samples_H = np.zeros((len(sample_indices_H), len(freq)))
+        for i, sample_idx in enumerate(sample_indices_H):
+            ci = sample_idx // n_draws_H
+            di = sample_idx % n_draws_H
+            g = float(posterior_H['g_factor_scaled'].values[ci, di]) / SCALING_FACTORS['g']
+            a = float(posterior_H['a_scale_scaled'].values[ci, di]) / SCALING_FACTORS['a']
+            B4 = float(posterior_H['B4_scaled'].values[ci, di]) / SCALING_FACTORS['B4']
+            B6 = float(posterior_H['B6_scaled'].values[ci, di]) / SCALING_FACTORS['B6']
+            eps = float(posterior_H['eps_bg_scaled'].values[ci, di]) / SCALING_FACTORS['eps']
+            gamma_array = np.array([
+                float(posterior_H[f'gamma_{j+1}_scaled'].values[ci, di]) / SCALING_FACTORS['gamma']
+                for j in range(7)
+            ])
+            trans_samples_H[i] = calculate_transmission_for_params(freq, B, T, g, a, B4, B6, eps, gamma_array, 'H')
+
+        trans_samples_B = np.zeros((len(sample_indices_B), len(freq)))
+        for i, sample_idx in enumerate(sample_indices_B):
+            ci = sample_idx // n_draws_B
+            di = sample_idx % n_draws_B
+            g = float(posterior_B['g_factor_scaled'].values[ci, di]) / SCALING_FACTORS['g']
+            a = float(posterior_B['a_scale_scaled'].values[ci, di]) / SCALING_FACTORS['a']
+            B4 = float(posterior_B['B4_scaled'].values[ci, di]) / SCALING_FACTORS['B4']
+            B6 = float(posterior_B['B6_scaled'].values[ci, di]) / SCALING_FACTORS['B6']
+            eps = float(posterior_B['eps_bg_scaled'].values[ci, di]) / SCALING_FACTORS['eps']
+            gamma_array = np.array([
+                float(posterior_B[f'gamma_{j+1}_scaled'].values[ci, di]) / SCALING_FACTORS['gamma']
+                for j in range(7)
+            ])
+            trans_samples_B[i] = calculate_transmission_for_params(freq, B, T, g, a, B4, B6, eps, gamma_array, 'B')
+
+        median_H = np.median(trans_samples_H, axis=0)
+        hdi_H = az.hdi(trans_samples_H, hdi_prob=0.94)
+        median_B = np.median(trans_samples_B, axis=0)
+        hdi_B = az.hdi(trans_samples_B, hdi_prob=0.94)
+
+        # 領域ハイライト（個別プロットと統一）
+        for f_s, f_e in data['polariton_regions']:
+            ax.axvspan(f_s, f_e, alpha=0.12, color='orange',
+                       label='Polariton' if f_s == data['polariton_regions'][0][0] else None)
+        for f_s, f_e in data['cavity_regions']:
+            ax.axvspan(f_s, f_e, alpha=0.12, color='green',
+                       label='Cavity' if f_s == data['cavity_regions'][0][0] else None)
+
+        ax.plot(freq, trans_obs, 'ko', markersize=2.3, alpha=0.55, label='Obs')
+        ax.plot(freq, median_H, 'r-', lw=2.0, label='H median')
+        ax.fill_between(freq, hdi_H[:, 0], hdi_H[:, 1], color='red', alpha=0.15, label='H 94% HDI')
+        ax.plot(freq, median_B, 'b-', lw=2.0, label='B median')
+        ax.fill_between(freq, hdi_B[:, 0], hdi_B[:, 1], color='blue', alpha=0.12, label='B 94% HDI')
+
+        rmse_H = np.sqrt(np.mean((trans_obs - median_H) ** 2))
+        rmse_B = np.sqrt(np.mean((trans_obs - median_B) ** 2))
+        ax.set_title(f"{label}  RMSE(H)={rmse_H:.4f}  RMSE(B)={rmse_B:.4f}", fontsize=8, fontweight='bold')
+        ax.set_xlabel('Frequency (THz)', fontsize=9)
+        ax.set_ylabel('Transmittance', fontsize=9)
+        ax.legend(fontsize=6, loc='best')
+        ax.grid(alpha=0.3)
+        ax.set_xlim([freq.min(), freq.max()])
+        ax.set_ylim([0, max(1.05, max(np.nanmax(median_H), np.nanmax(median_B)) * 1.05)])
+
+    for idx in range(n_datasets, len(axes)):
+        axes[idx].axis('off')
+
+    plt.tight_layout()
+    if save_dir:
+        path = save_dir / 'posterior_predictive_spectra_HB.png'
         plt.savefig(path, dpi=300, bbox_inches='tight')
         print(f"  ✓ {path.name} saved")
     plt.close()
@@ -1000,7 +1118,7 @@ def plot_energy_levels(trace, datasets, model_form='H', save_dir=None, n_samples
     _fig, ax = plt.subplots(figsize=(10, 7))
     colors = [plt.colormaps['tab10'](i / n_states) for i in range(n_states)]
     for k in range(n_states):
-        ax.scatter(B_fields, median_evals[:, k], c=[colors[k]], s=12, zorder=3,
+        ax.scatter(B_fields, median_evals[:, k], c=[colors[k]], s=15, zorder=3,
                    label=f'|{k}⟩', edgecolors='none')
 
     ax.set_xlabel('Magnetic Field B (T)', fontsize=12)
@@ -1202,22 +1320,22 @@ def build_pymc_model(datasets, model_form, v8_params_H, v8_params_B):
             pt.clip(a_raw, 0.1, 12.0) * SCALING_FACTORS['a'])
 
         # ------------------------------------------
-        # 3. B₄: v8 中心 Normal (負値許容)
+        # 3. B₄: v8 中心 Normal (負値許容・clip なし → 真の事後分布)
         # ------------------------------------------
         B4_raw_name = f'B4_raw_{model_form}'
-        B4_sigma = max(0.01, 3.0 * (v8_params_model.get('B4_std') or 0.0))
+        B4_sigma = max(0.05, 3.0 * (v8_params_model.get('B4_std') or 0.0))
         B4_raw = pm.Normal(B4_raw_name, mu=v8_params_model['B4'], sigma=B4_sigma)
         B4_scaled = pm.Deterministic('B4_scaled',
-            pt.clip(B4_raw, -0.075, 0.075) * SCALING_FACTORS['B4'])
+            B4_raw * SCALING_FACTORS['B4'])
 
         # ------------------------------------------
-        # 4. B₆: v8 中心 Normal + clip
+        # 4. B₆: v8 中心 Normal (clip なし → 真の事後分布)
         # ------------------------------------------
         B6_raw_name = f'B6_raw_{model_form}'
-        B6_sigma = max(0.003, 3.0 * (v8_params_model.get('B6_std') or 0.0))
+        B6_sigma = max(0.010, 3.0 * (v8_params_model.get('B6_std') or 0.0))
         B6_raw = pm.Normal(B6_raw_name, mu=v8_params_model['B6'], sigma=B6_sigma)
         B6_scaled = pm.Deterministic('B6_scaled',
-            pt.clip(B6_raw, -0.025, 0.025) * SCALING_FACTORS['B6'])
+            B6_raw * SCALING_FACTORS['B6'])
 
         # ------------------------------------------
         # 5. ε_bg: TruncNormal
@@ -1230,17 +1348,25 @@ def build_pymc_model(datasets, model_form, v8_params_H, v8_params_B):
             upper=16.0 * SCALING_FACTORS['eps'])
 
         # ------------------------------------------
-        # 6. γ: Non-centered 階層モデル (v7.1 継承)
+        # 6. γ: Non-centered 階層モデル (clip なし → exp() で正定値保証)
         # ------------------------------------------
         log_gamma_mu = pm.Normal('log_gamma_mu',
-            mu=np.log(GAMMA_HYPERPRIOR_MU), sigma=0.3)
-        log_gamma_sd = pm.HalfNormal('log_gamma_sd', sigma=0.3)
+            mu=np.log(GAMMA_HYPERPRIOR_MU), sigma=0.5)
+        log_gamma_sd = pm.HalfNormal('log_gamma_sd', sigma=0.5)
 
         gamma_raw = pm.Normal('gamma_raw', mu=0, sigma=1, shape=7)
         gamma_vec_unscaled = pm.Deterministic('gamma_vec',
             pt.exp(log_gamma_mu + log_gamma_sd * gamma_raw))
+        # exp() が常に正を保証するため clip 不要
         gamma_vec_scaled = pm.Deterministic('gamma_vec_scaled',
-            pt.clip(gamma_vec_unscaled, 0.005, 0.5) * SCALING_FACTORS['gamma'])
+            gamma_vec_unscaled * SCALING_FACTORS['gamma'])
+        # 各 gamma への弱い v8 アンカー（同定性補助）
+        gamma_v8 = np.asarray(v8_params_model['gamma'], dtype=np.float64)
+        gamma_prior_sigma = np.maximum(0.01, 0.5 * np.abs(gamma_v8))
+        gamma_anchor_z = (
+            gamma_vec_unscaled - gamma_v8
+        ) / gamma_prior_sigma
+        pm.Potential('ll_gamma_v8_anchor', -0.1 * pt.sum(gamma_anchor_z ** 2))
         for i in range(7):
             pm.Deterministic(f'gamma_{i+1}_scaled', gamma_vec_scaled[i])
         pm.Deterministic('gamma_mean_scaled',
@@ -1338,7 +1464,7 @@ def main():
 
     # 結果ディレクトリ
     timestamp   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = pathlib.Path(__file__).parent / f"bayesian_v9_results_{timestamp}"
+    results_dir = pathlib.Path(__file__).parent / f"bayesian_v10_results_{timestamp}"
     results_dir.mkdir(exist_ok=True)
     print(f"\n📁 結果保存先: {results_dir}")
 
@@ -1380,6 +1506,7 @@ def main():
     plot_posterior_predictive_spectra(trace_H, datasets, 'H', results_dir)
     plot_posterior_distributions(trace_B, 'B', results_dir)
     plot_posterior_predictive_spectra(trace_B, datasets, 'B', results_dir)
+    plot_posterior_predictive_spectra_combined(trace_H, trace_B, datasets, results_dir)
     plot_energy_levels(trace_H, datasets, 'H', results_dir)
     plot_susceptibility(trace_H, datasets, 'H', results_dir)
     plot_energy_levels(trace_B, datasets, 'B', results_dir)
